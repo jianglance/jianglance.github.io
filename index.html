@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f9faf7">
+    <title>Coming soon</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #f9faf7;
+        --ink: #202824;
+        font-family: "Segoe UI", system-ui, sans-serif;
+      }
+
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+      }
+
+      main {
+        position: relative;
+        display: grid;
+        min-height: 100vh;
+        min-height: max(22rem, 100svh);
+        place-items: center;
+        overflow: hidden;
+      }
+
+      h1 {
+        z-index: 1;
+        margin: 0;
+        font-size: clamp(2.75rem, 8vw, 7rem);
+        font-weight: 580;
+        line-height: 1.1;
+        letter-spacing: -0.071em;
+        white-space: nowrap;
+        pointer-events: none;
+      }
+
+      canvas {
+        position: absolute;
+        width: min(100%, 66rem);
+        height: clamp(16rem, 65svh, 30rem);
+        cursor: crosshair;
+        touch-action: manipulation;
+      }
+
+
+    </style>
+  </head>
+  <body>
+    <main>
+      <canvas aria-hidden="true"></canvas>
+      <h1>Coming soon</h1>
+    </main>
+
+    <script>
+      const canvas = document.querySelector("canvas");
+      const context = canvas.getContext("2d");
+      const heading = document.querySelector("h1");
+      const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+      const ink = "#36816d";
+      const spacing = 24;
+
+      const obstaclePatterns = [
+        { at: [0.19, 0.65], offsets: [[0, 0], [1, 0], [0, 1]] },
+        { at: [0.41, 0.24], offsets: [[0, 0], [1, 0], [1, 1]] },
+        { at: [0.63, 0.76], offsets: [[0, 0], [0, 1], [1, 1]] },
+        { at: [0.81, 0.26], offsets: [[0, 0], [1, 0]] }
+      ];
+
+      let width, height, columns, rows, cells, start, goal, path;
+      let hoveredGoal = null;
+      let hoverTimer;
+      let progress = 0;
+      let frame;
+
+      function closestOpenCell(x, y) {
+        let nearest = -1;
+        let best = Infinity;
+        for (const [index, cell] of cells.entries()) {
+          const distance = (x - cell.x) ** 2 + (y - cell.y) ** 2;
+          if (!cell.blocked && distance < best) {
+            nearest = index;
+            best = distance;
+          }
+        }
+        return nearest;
+      }
+
+      function findPath() {
+        // Breadth-first search keeps each route as short as the grid allows.
+        const queue = [start];
+        const previous = new Int32Array(cells.length).fill(-1);
+        previous[start] = start;
+
+        for (let head = 0; head < queue.length; head++) {
+          const index = queue[head];
+          if (index === goal) break;
+          const { column, row } = cells[index];
+          const neighbors = [
+            [column + 1, row], [column, row + 1],
+            [column - 1, row], [column, row - 1]
+          ];
+          for (const [x, y] of neighbors) {
+            if (x < 0 || x >= columns || y < 0 || y >= rows) continue;
+            const next = y * columns + x;
+            if (previous[next] !== -1 || cells[next].blocked) continue;
+            previous[next] = index;
+            queue.push(next);
+          }
+        }
+
+        if (previous[goal] === -1) return [];
+        const route = [cells[goal]];
+        for (let next = goal; next !== start;) {
+          next = previous[next];
+          route.push(cells[next]);
+        }
+        return route.reverse();
+      }
+
+      function drawRoute() {
+        if (path.length > 1) {
+          context.beginPath();
+          context.moveTo(path[0].x, path[0].y);
+          for (const cell of path.slice(1)) context.lineTo(cell.x, cell.y);
+          context.lineJoin = "round";
+          context.lineCap = "round";
+          context.lineWidth = 1;
+          context.strokeStyle = "#bccfc3";
+          context.stroke();
+
+          const length = (path.length - 1) * spacing;
+          if (progress > 0) {
+            context.setLineDash([length * progress, length + spacing]);
+            context.strokeStyle = ink;
+            context.lineWidth = 1.5;
+            context.stroke();
+            context.setLineDash([]);
+          }
+
+          if (progress > 0 && progress < 1) {
+            const step = (path.length - 1) * progress;
+            const index = Math.floor(step);
+            const from = path[index];
+            const to = path[index + 1];
+            const fraction = step - index;
+            const x = from.x + (to.x - from.x) * fraction;
+            const y = from.y + (to.y - from.y) * fraction;
+            context.fillStyle = ink;
+            context.fillRect(x - 2.5, y - 2.5, 5, 5);
+          }
+        }
+
+        const source = cells[start];
+        const destination = cells[goal];
+        context.fillStyle = ink;
+        context.beginPath();
+        context.arc(source.x, source.y, 3.5, 0, Math.PI * 2);
+        context.fill();
+
+        context.lineWidth = 1.25;
+        context.strokeStyle = ink;
+        context.fillStyle = "#f9faf7";
+        context.fillRect(destination.x - 4, destination.y - 4, 8, 8);
+        context.strokeRect(destination.x - 4, destination.y - 4, 8, 8);
+      }
+
+      function draw() {
+        context.clearRect(0, 0, width, height);
+        for (const cell of cells) {
+          const distanceFromEdge = Math.min(cell.x, width - cell.x, cell.y, height - cell.y);
+          context.globalAlpha = Math.min(distanceFromEdge / 64, 1);
+          if (cell.obstacle) {
+            context.fillStyle = "#dce4dc";
+            context.fillRect(cell.x - 4, cell.y - 4, 8, 8);
+          } else if (!cell.blocked) {
+            context.fillStyle = "#c7d2c9";
+            context.fillRect(cell.x - 0.75, cell.y - 0.75, 1.5, 1.5);
+          }
+        }
+        context.globalAlpha = 1;
+        drawRoute();
+      }
+
+      function traceTo(target) {
+        goal = target;
+        cancelAnimationFrame(frame);
+        path = findPath();
+        progress = reducedMotion.matches ? 1 : 0;
+        draw();
+
+        if (progress === 1) return;
+        const duration = Math.min(950, 220 + path.length * 24);
+        let began;
+        function tick(now) {
+          began ??= now;
+          progress = reducedMotion.matches ? 1 : Math.min((now - began) / duration, 1);
+          draw();
+          if (progress < 1) frame = requestAnimationFrame(tick);
+        }
+        frame = requestAnimationFrame(tick);
+      }
+
+      function resize() {
+        const bounds = canvas.getBoundingClientRect();
+        const title = heading.getBoundingClientRect();
+        width = bounds.width;
+        height = bounds.height;
+        columns = Math.max(2, Math.floor(width / spacing) - 1);
+        rows = Math.max(2, Math.floor(height / spacing) - 1);
+
+        const scale = Math.min(devicePixelRatio || 1, 2);
+        canvas.width = Math.round(width * scale);
+        canvas.height = Math.round(height * scale);
+        context.setTransform(scale, 0, 0, scale, 0, 0);
+
+        const obstacles = new Set();
+        for (const { at: [x, y], offsets } of obstaclePatterns) {
+          for (const [dx, dy] of offsets) {
+            const column = Math.round(x * (columns - 1)) + dx;
+            const row = Math.round(y * (rows - 1)) + dy;
+            if (column < columns && row < rows) obstacles.add(row * columns + column);
+          }
+        }
+
+        cells = Array.from({ length: columns * rows }, (_, index) => {
+          const column = index % columns;
+          const row = Math.floor(index / columns);
+          const x = (width - spacing * (columns - 1)) / 2 + column * spacing;
+          const y = (height - spacing * (rows - 1)) / 2 + row * spacing;
+          const obstacle = obstacles.has(index);
+          // Keep both outside columns available as bypasses on narrow screens.
+          const behindTitle = column > 0 && column < columns - 1 &&
+            x + bounds.left > title.left - 25 &&
+            x + bounds.left < title.right + 25 &&
+            y + bounds.top > title.top - 13 && y + bounds.top < title.bottom + 13;
+          return { x, y, column, row, obstacle: obstacle && !behindTitle, blocked: obstacle || behindTitle };
+        });
+
+        start = closestOpenCell(width * 0.13, height * 0.30);
+        goal = closestOpenCell(width * 0.85, height * 0.70);
+        clearHover();
+        cancelAnimationFrame(frame);
+        path = findPath();
+        progress = 0;
+        draw();
+      }
+
+      function clearHover() {
+        clearTimeout(hoverTimer);
+        hoveredGoal = null;
+      }
+
+      function followMouse(event) {
+        if (!cells || event.pointerType !== "mouse") return;
+        const target = closestOpenCell(event.offsetX, event.offsetY);
+        if (target === hoveredGoal) return;
+
+        const entered = hoveredGoal === null;
+        hoveredGoal = target;
+        clearTimeout(hoverTimer);
+        if (entered) {
+          traceTo(target);
+        } else if (target !== goal) {
+          // Pause briefly before retargeting so crossing multiple dots does not restart every trace.
+          hoverTimer = setTimeout(() => traceTo(target), 85);
+        }
+      }
+
+      if (context) {
+        new ResizeObserver(resize).observe(canvas);
+        canvas.addEventListener("pointerenter", followMouse);
+        canvas.addEventListener("pointermove", followMouse);
+        canvas.addEventListener("pointerleave", clearHover);
+        canvas.addEventListener("click", (event) => {
+          if (!cells || event.pointerType === "mouse") return;
+          clearHover();
+          traceTo(closestOpenCell(event.offsetX, event.offsetY));
+        });
+      }
+    </script>
+  </body>
+</html>
